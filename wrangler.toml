@@ -1,4 +1,3 @@
-name = "cloudflare-worker"
+name = "proxy-worker"
 compatibility_date = "2025-03-21"
 main = "src/index.ts"
-compatibility_flags = ["nodejs_compat"]
