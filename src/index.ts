@@ -54,7 +54,7 @@ export default {
         headers: {
           "Access-Control-Allow-Origin": "*",
           "Access-Control-Allow-Methods": "GET,POST,PUT,DELETE,OPTIONS",
-          "Access-Control-Allow-Headers": "Authorization,Cookie,X-Api-Key,Connection,Upgrade,Sec-WebSocket-Key,Sec-WebSocket-Version",
+          "Access-Control-Allow-Headers": "Authorization,Cookie,X-Api-Key,Connection,Upgrade,Sec-WebSocket-Key,Sec-WebSocket-Version,Sec-WebSocket-Protocol,Sec-WebSocket-Extensions",
           "Access-Control-Max-Age": "86400",
         },
         status: 204,
@@ -65,7 +65,7 @@ export default {
     let proxyUrl;
     let targetDomain = null;
     let setCookie = false;
-    let isWebSocket = request.headers.get('Upgrade') === 'websocket' && request.headers.get('Connection')?.includes('Upgrade');
+    const isWebSocket = request.headers.get('Upgrade') === 'websocket' && request.headers.get('Connection')?.toLowerCase().includes('upgrade');
 
     const cookies = request.headers.get('Cookie') || '';
     const cookieMatch = cookies.match(/proxied_domain=([^;]+)/);
@@ -74,13 +74,13 @@ export default {
       // Relative path (e.g., "image.jpg" or "socket")
       targetDomain = cookieMatch[1];
       try {
-        const parsedDomain = new URL(`https://${targetDomain}`);
-        proxyUrl = isWebSocket ? `wss://${targetDomain}/${targetPath}${url.search}` : `https://${targetDomain}/${targetPath}${url.search}`;
+        const protocol = isWebSocket ? 'wss://' : 'https://';
+        const parsedDomain = new URL(`${protocol}${targetDomain}`);
+        proxyUrl = `${protocol}${targetDomain}/${targetPath}${url.search}`;
       } catch (e) {
         return new Response("Invalid cookie domain", { status: 400 });
       }
     } else {
-      // Direct request (e.g., "media.istockphoto.com/..." or "example.com/socket")
       try {
         const protocol = isWebSocket ? 'wss://' : 'https://';
         const parsedTarget = new URL(`${protocol}${targetPath}`);
@@ -94,42 +94,50 @@ export default {
 
     // Proxy request
     try {
-      const authHeaders: Record<string, string> = {};
+      const headers = new Headers();
       ['Authorization', 'Cookie', 'X-Api-Key'].forEach(header => {
         const value = request.headers.get(header);
-        if (value) authHeaders[header] = value;
+        if (value) headers.set(header, value);
       });
 
+      const userAgent = request.headers.get('User-Agent') ?? 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36';
+      const accept = request.headers.get('Accept') ?? 'text/html,application/xhtml+xml,*/*;q=0.8';
+      const acceptLanguage = request.headers.get('Accept-Language') ?? 'en-US,en;q=0.9';
+      const acceptEncoding = request.headers.get('Accept-Encoding') ?? 'gzip, deflate, br';
+
       // WebSocket-specific headers
-      const wsHeaders: Record<string, string> = {};
       if (isWebSocket) {
-        ['Connection', 'Upgrade', 'Sec-WebSocket-Key', 'Sec-WebSocket-Version'].forEach(header => {
+        ['Connection', 'Upgrade', 'Sec-WebSocket-Key', 'Sec-WebSocket-Version', 'Sec-WebSocket-Protocol', 'Sec-WebSocket-Extensions'].forEach(header => {
           const value = request.headers.get(header);
-          if (value) wsHeaders[header] = value;
+          if (value) headers.set(header, value);
         });
+        headers.set('User-Agent', userAgent);
+        headers.set('Origin', `https://${targetDomain}`);
+      } else {
+        headers.set('User-Agent', userAgent);
+        headers.set('Accept', accept);
+        headers.set('Accept-Encoding', acceptEncoding);
+        headers.set('Accept-Language', acceptLanguage);
+        headers.set('Connection', 'keep-alive');
+        headers.set('Origin', `https://${targetDomain}`);
+        headers.set('Referer', `https://${targetDomain}/`);
+        headers.set('Sec-Fetch-Dest', 'empty');
+        headers.set('Sec-Fetch-Mode', 'cors');
+        headers.set('Sec-Fetch-Site', 'cross-site');
       }
 
-      const targetUrl = new URL(proxyUrl);
+      headers.set('Host', new URL(proxyUrl).hostname);
+
       const response = await fetch(proxyUrl, {
         method: request.method,
-        headers: {
-          'User-Agent': request.headers.get('User-Agent') ?? 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36',
-          'Accept': request.headers.get('Accept') ?? 'text/html,application/xhtml+xml,*/*;q=0.8',
-          'Accept-Language': request.headers.get('Accept-Language') ?? 'en-US,en;q=0.9',
-          'Accept-Encoding': request.headers.get('Accept-Encoding') ?? 'gzip, deflate, br',
-          'Connection': isWebSocket ? 'Upgrade' : 'keep-alive',
-          'Origin': `https://${targetDomain}`,
-          'Referer': `https://${targetDomain}/`,
-          'Host': targetUrl.hostname,
-          'Sec-Fetch-Dest': isWebSocket ? 'websocket' : 'empty',
-          'Sec-Fetch-Mode': 'cors',
-          'Sec-Fetch-Site': 'cross-site',
-          ...wsHeaders,
-          ...authHeaders
-        },
+        headers,
         body: request.body,
         redirect: 'follow',
       });
+
+      if (!response.ok && isWebSocket) {
+        return new Response(`WebSocket proxy failed: ${response.status} ${response.statusText}`, { status: 502 });
+      }
 
       const modifiedResponse = new Response(response.body, response);
       response.headers.forEach((value, name) => {
