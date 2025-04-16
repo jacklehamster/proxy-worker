@@ -1,6 +1,5 @@
 export default {
   async fetch(request: Request, env: any) {
-    console.log(request.headers);
     const url = new URL(request.url);
     const targetPath = url.pathname.slice(1);
 
@@ -24,7 +23,7 @@ export default {
           </head>
           <body>
             <h2>Enter Target URL</h2>
-            <input id="urlInput" placeholder="e.g., media.istockphoto.com/..." autofocus>
+            <input id="urlInput" placeholder="e.g., upload.wikimedia.org/..." autofocus>
             <div id="error"></div>
             <script>
               const input = document.getElementById("urlInput");
@@ -90,7 +89,6 @@ export default {
         return new Response("Invalid cookie domain", { status: 400 });
       }
     } else {
-      // Direct request without cookie (e.g., "media.istockphoto.com/...")
       try {
         const parsedTarget = new URL(`https://${targetPath}`);
         targetDomain = parsedTarget.hostname;
@@ -118,8 +116,12 @@ export default {
           'Accept-Language': request.headers.get('Accept-Language') ?? 'en-US,en;q=0.9',
           'Accept-Encoding': request.headers.get('Accept-Encoding') ?? 'gzip, deflate, br',
           'Connection': 'keep-alive',
-          'Origin': url.origin,
+          'Origin': `https://${targetDomain}`,
+          'Referer': `https://${targetDomain}/`,
           'Host': targetUrl.hostname,
+          'Sec-Fetch-Dest': 'empty',
+          'Sec-Fetch-Mode': 'cors',
+          'Sec-Fetch-Site': 'cross-site',
           ...authHeaders
         },
         body: request.body,
